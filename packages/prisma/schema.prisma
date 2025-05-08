@@ -20,8 +20,8 @@ generator zod {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("NEXT_PRIVATE_DATABASE_URL")
-  directUrl = env("NEXT_PRIVATE_DIRECT_DATABASE_URL")
+  url       = env("DATABASE_URL"))
+  directUrl = env("DATABASE_URL")
 }
 
 // Todo: (RR7) Remove after RR7 migration.
