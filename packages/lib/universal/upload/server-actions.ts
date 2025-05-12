@@ -4,6 +4,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import type { S3ClientConfig } from '@aws-sdk/client-s3';
 import slugify from '@sindresorhus/slugify';
 import path from 'node:path';
 
@@ -11,6 +12,70 @@ import { env } from '@documenso/lib/utils/env';
 
 import { ONE_HOUR, ONE_SECOND } from '../../constants/time';
 import { alphaid } from '../id';
+
+
+// Helper function to parse VCAP_SERVICES
+const getS3ConfigFromVcap = () => {
+  if (!process.env.VCAP_SERVICES) return null;
+
+  try {
+    const vcapServices = JSON.parse(process.env.VCAP_SERVICES);
+
+    const s3Service = vcapServices['aws-s3']?.[0]?.credentials ||
+                     vcapServices['s3']?.[0]?.credentials ||
+                     vcapServices['objectstore']?.[0]?.credentials;
+
+    if (s3Service) {
+      return {
+        bucketName: s3Service.bucket_name || s3Service.bucket,
+        region: s3Service.region,
+        accessKey: s3Service.access_key_id,
+        secretKey: s3Service.secret_access_key,
+        endpoint: s3Service.endpoint
+      };
+    }
+  } catch (e) {
+    console.error('Failed to parse VCAP_SERVICES', e);
+  }
+  return null;
+};
+
+const getS3Client = () => {
+  const NEXT_PUBLIC_UPLOAD_TRANSPORT = env('NEXT_PUBLIC_UPLOAD_TRANSPORT');
+  
+  if (NEXT_PUBLIC_UPLOAD_TRANSPORT !== 's3') {
+    throw new Error('Invalid upload transport');
+  } 
+  
+  const vcapConfig = getS3ConfigFromVcap();
+
+  const BUCKET_NAME = vcapConfig?.bucketName || process.env.NEXT_PRIVATE_S3_BUCKET;
+  const REGION = vcapConfig?.region || process.env.NEXT_PRIVATE_S3_REGION;
+  const ACCESS_KEY = vcapConfig?.accessKey || process.env.NEXT_PRIVATE_S3_ACCESS_KEY;
+  const SECRET_KEY = vcapConfig?.secretKey || process.env.NEXT_PRIVATE_S3_SECRET_KEY;
+  const ENDPOINT = vcapConfig?.endpoint || process.env.NEXT_PRIVATE_S3_ENDPOINT;
+
+  if (!BUCKET_NAME || !REGION || !ACCESS_KEY || !SECRET_KEY) {
+    throw new Error(
+      'Missing S3 credentials. Please configure VCAP_SERVICES with S3 service or set environment variables.',
+    );
+  }
+
+  const clientConfig = {
+    region: REGION,
+    credentials: {
+      accessKeyId: ACCESS_KEY,
+      secretAccessKey: SECRET_KEY,
+    },
+    ...(ENDPOINT && {
+      endpoint: ENDPOINT,
+      forcePathStyle: true
+    })
+  };
+
+  return new S3Client(clientConfig);
+};
+
 
 export const getPresignPostUrl = async (fileName: string, contentType: string, userId?: number) => {
   const client = getS3Client();
@@ -124,25 +189,3 @@ export const deleteS3File = async (key: string) => {
   );
 };
 
-const getS3Client = () => {
-  const NEXT_PUBLIC_UPLOAD_TRANSPORT = env('NEXT_PUBLIC_UPLOAD_TRANSPORT');
-
-  if (NEXT_PUBLIC_UPLOAD_TRANSPORT !== 's3') {
-    throw new Error('Invalid upload transport');
-  }
-
-  const hasCredentials =
-    env('NEXT_PRIVATE_UPLOAD_ACCESS_KEY_ID') && env('NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY');
-
-  return new S3Client({
-    endpoint: env('NEXT_PRIVATE_UPLOAD_ENDPOINT') || undefined,
-    forcePathStyle: env('NEXT_PRIVATE_UPLOAD_FORCE_PATH_STYLE') === 'true',
-    region: env('NEXT_PRIVATE_UPLOAD_REGION') || 'us-east-1',
-    credentials: hasCredentials
-      ? {
-          accessKeyId: String(env('NEXT_PRIVATE_UPLOAD_ACCESS_KEY_ID')),
-          secretAccessKey: String(env('NEXT_PRIVATE_UPLOAD_SECRET_ACCESS_KEY')),
-        }
-      : undefined,
-  });
-};
